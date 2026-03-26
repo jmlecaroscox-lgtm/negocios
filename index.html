@@ -430,16 +430,42 @@ td{padding:.75rem .9rem;font-size:.83rem;vertical-align:middle}
   .stats-row { grid-template-columns:1fr 1fr; }
   .mod-grid { grid-template-columns:1fr 1fr; }
   .stat-val { font-size:1.05rem !important; }
-  /* On very small screens hide even more mat columns */
-  #mat-body tr td:nth-child(3),   /* N° Guía */
-  #mat-body tr td:nth-child(4),   /* N° Guía Exp */
-  #mat-body tr td:nth-child(6),   /* Fecha fact */
-  #mat-body tr td:nth-child(10),  /* Nota */
-  #mat-body tr td:nth-child(13),  /* Moneda */
-  #mat-body tr td:nth-child(15),  /* IVA */
-  #mat-body tr td:nth-child(16),  /* TC */
-  #mat-body tr td:nth-child(18),  /* Condiciones */
-  #mat-body tr td:nth-child(19)   /* Nota pago */ { display:none; }
+}
+
+/* ── MOBILE CARD VIEW para tabla materiales ── */
+@media(max-width:768px){
+  /* Ocultar tabla normal y mostrar cards */
+  .mat-table-wrap { display:none; }
+  .mat-cards-wrap { display:block; }
+
+  /* Cards de materiales */
+  .mat-card {
+    background:#fff; border:1px solid var(--border);
+    border-radius:8px; padding:.75rem; margin-bottom:.5rem;
+    box-shadow:var(--sh); cursor:pointer;
+  }
+  .mat-card:active { background:#faf8ff; }
+  .mat-card-top { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:.35rem; }
+  .mat-card-prov { font-weight:700; font-size:.88rem; color:var(--text); }
+  .mat-card-fecha { font-size:.72rem; color:var(--muted); white-space:nowrap; }
+  .mat-card-tipo { font-size:.82rem; color:var(--text2); margin-bottom:.3rem; }
+  .mat-card-row { display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; margin-top:.3rem; }
+  .mat-card-guia { font-family:'IBM Plex Mono',monospace; font-size:.72rem; background:#f0eaff; color:#5b4fcf; padding:.1rem .4rem; border-radius:3px; }
+  .mat-card-neto { font-family:'IBM Plex Mono',monospace; font-size:.78rem; color:var(--green); font-weight:600; }
+  .mat-card-cant { font-size:.72rem; color:var(--muted); }
+  .mat-card-actions { display:flex; gap:.4rem; margin-top:.45rem; padding-top:.4rem; border-top:1px solid var(--border); }
+  .mat-card-actions button { flex:1; font-size:.72rem; padding:.3rem; }
+
+  /* Ocultar filter row en mobile */
+  .col-filter-row { display:none; }
+
+  /* Toolbar mobile */
+  .sticky-toolbar .toolbar { flex-wrap:wrap; gap:.35rem; }
+}
+
+@media(min-width:769px){
+  .mat-table-wrap { display:block; }
+  .mat-cards-wrap { display:none; }
 }
 
 
@@ -612,6 +638,7 @@ CREATE POLICY "public_access" ON materiales FOR ALL USING (true) WITH CHECK (tru
           <button class="btn btn-primary btn-sm" onclick="openMatModal()">+ Agregar</button>
         </div>
         <div class="card">
+          <div class="mat-table-wrap">
           <div class="sticky-table-wrap">
             <table>
               <thead>
@@ -661,6 +688,9 @@ CREATE POLICY "public_access" ON materiales FOR ALL USING (true) WITH CHECK (tru
               <tbody id="mat-body"></tbody>
             </table>
           </div>
+          </div>
+          <!-- MOBILE CARDS -->
+          <div class="mat-cards-wrap" id="mat-cards"></div>
         </div>
       </div>
 
@@ -1685,19 +1715,38 @@ function renderMat() {
   gEl('ms-pend').textContent=fmtM(totPend);
   gEl('badge-mat').textContent=mats.length;
 
-  fl = doSort(fl, matsSort.col, matsSort.dir, (m, col) => {
+  // ── 3-level sort: primary col → guía agrupada → created_at
+  const guiaKey = m => {
+    const raw = [m.nguia, m.nguia_exp, m.factura].filter(Boolean).map(v=>String(v).trim()).join('/');
+    if (!raw) return '~'; // nulls last
+    const match = raw.match(/\d+/);
+    return match ? String(Number(match[0])).padStart(10,'0') : raw.toLowerCase();
+  };
+
+  fl = fl.sort((a, b) => {
+    // Primary sort
+    let va, vb;
+    const col = matsSort.col;
     if (col === 'nguia_any') {
-      // Combine nguia + nguia_exp into one key for grouping
-      const raw = [m.nguia, m.nguia_exp].filter(Boolean).map(v => String(v).trim()).join('/');
-      if (!raw) return 999999; // nulls go last
-      // Extract first number found
-      const match = raw.match(/\d+/);
-      return match ? Number(match[0]) : raw.toLowerCase();
+      va = guiaKey(a); vb = guiaKey(b);
+    } else {
+      va = sortVal(a[col], col); vb = sortVal(b[col], col);
     }
-    return sortVal(m[col], col);
-  }, matsSort.sec);
+    if (va < vb) return matsSort.dir === 'asc' ? -1 : 1;
+    if (va > vb) return matsSort.dir === 'asc' ? 1 : -1;
+
+    // Secondary: always group by guía number
+    const ga = guiaKey(a), gb = guiaKey(b);
+    if (ga < gb) return -1;
+    if (ga > gb) return 1;
+
+    // Tertiary: preserve insertion order (created_at)
+    const ca = a.created_at||'', cb = b.created_at||'';
+    return ca < cb ? -1 : ca > cb ? 1 : 0;
+  });
   applySortUI('mat-body', matsSort.col === 'nguia_any' ? 'nguia' : matsSort.col, matsSort);
   const tbody=gEl('mat-body');
+  const cardsWrap=gEl('mat-cards');
   if (!fl.length) {
     tbody.innerHTML=`<tr><td colspan="20" class="td-empty"><span class="empty-ico">📦</span>${mats.length?'Sin resultados.':'No hay registros aún.'}</td></tr>`;
     return;
@@ -1932,7 +1981,7 @@ function sortMat(col) {
   else {
     matsSort.col = col;
     matsSort.dir = (col.includes('fecha') || col === 'neto' || col === 'cantidad') ? 'desc' : 'asc';
-    matsSort.sec = (col === 'factura' || col === 'nguia' || col === 'nguia_any') ? 'fecha_desp' : null;
+    matsSort.sec = null; // handled in custom 3-level sort
     if (col === 'nguia' || col === 'nguia_exp') matsSort.col = 'nguia_any';
   }
   renderMat();
