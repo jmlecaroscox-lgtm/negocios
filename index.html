@@ -753,7 +753,7 @@ tfoot td.label{text-align:left;font-family:var(--font);font-size:.62rem;letter-s
 // ═══════════════════════════════════════════════
 const SB_URL  = 'https://coqqwnnmzpzkdghsvorr.supabase.co';
 const SB_KEY  = 'sb_publishable_yNBdR1li3cp6aLTMS9IoKw_QbYESJ5K';
-const ANT_KEY = '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';
+const ANT_KEY = 'WORKER_KEY';
 const sb = supabase.createClient(SB_URL, SB_KEY);
 
 // ═══════════════════════════════════════════════
@@ -2143,47 +2143,23 @@ async function fileToB64(file){
 const WORKER_URL = 'https://floral-smoke-e3adjm-lecaroscoxworkersdev.jm-lecaroscox.workers.dev';
 
 async function callAI(content, maxTokens=1200){
-  // Try worker proxy first (works from GitHub Pages + mobile)
-  // Falls back to direct call (works from local Chrome)
-  const body = {
-    api_key: ANT_KEY,
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: maxTokens,
-    messages: [{role:'user', content}]
-  };
-
-  try {
-    const resp = await fetch(WORKER_URL, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(body)
-    });
-    if(!resp.ok) throw new Error('Worker HTTP '+resp.status);
-    const data = await resp.json();
-    if(data.error) throw new Error(data.error.message);
-    return (data.content||[]).map(c=>c.text||'').join('').trim()
-      .replace(/```json/g,'').replace(/```/g,'').trim();
-  } catch(e) {
-    // Fallback: direct call
-    const resp2 = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANT_KEY,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({model:'claude-sonnet-4-20250514', max_tokens:maxTokens, messages:[{role:'user',content}]})
-    });
-    if(!resp2.ok){
-      const txt = await resp2.text().catch(()=>'');
-      throw new Error('HTTP '+resp2.status+': '+txt.slice(0,200));
-    }
-    const data2 = await resp2.json();
-    if(data2.error) throw new Error(data2.error.message||'API error');
-    return (data2.content||[]).map(c=>c.text||'').join('').trim()
-      .replace(/```json/g,'').replace(/```/g,'').trim();
+  const resp = await fetch(WORKER_URL, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: maxTokens,
+      messages: [{role:'user', content}]
+    })
+  });
+  if(!resp.ok){
+    const txt = await resp.text().catch(()=>'');
+    throw new Error('HTTP '+resp.status+': '+txt.slice(0,200));
   }
+  const data = await resp.json();
+  if(data.error) throw new Error(data.error.message||'API error');
+  return (data.content||[]).map(c=>c.text||'').join('').trim()
+    .replace(/```json/g,'').replace(/```/g,'').trim();
 }
 
 function hideBanners(pfx){
