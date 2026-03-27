@@ -2140,35 +2140,41 @@ async function fileToB64(file){
   return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result.split(',')[1]);r.onerror=rej;r.readAsDataURL(file);});
 }
 
-// ── API proxy — cambia PROXY_URL por tu Cloudflare Worker para usar desde GitHub Pages
-// Ver instrucciones en worker.js descargado abajo
+// ── Cloudflare Worker proxy (evita CORS en GitHub Pages)
 const PROXY_URL = 'https://floral-smoke-e3adjm-lecaroscoxworkersdev.jm-lecaroscox.workers.dev';
 
 async function callAI(content, maxTokens=1200){
-  const url = PROXY_URL || 'https://api.anthropic.com/v1/messages';
-  const headers = {'Content-Type':'application/json'};
-  const bodyObj = {model:'claude-sonnet-4-20250514', max_tokens:maxTokens, messages:[{role:'user',content}]};
+  // Try proxy first, fallback to direct
+  const urls = [PROXY_URL, 'https://api.anthropic.com/v1/messages'];
+  let lastErr = null;
 
-  if(!PROXY_URL){
-    // Direct call — needs special header
-    headers['x-api-key'] = ANT_KEY;
-    headers['anthropic-version'] = '2023-06-01';
-    headers['anthropic-dangerous-direct-browser-access'] = 'true';
-  } else {
-    // Proxy — send key in body so Worker can forward it
-    bodyObj.api_key = ANT_KEY;
+  for(const url of urls){
+    try{
+      const isDirect = url.includes('anthropic.com');
+      const headers = {'Content-Type':'application/json'};
+      const body = {model:'claude-sonnet-4-20250514', max_tokens:maxTokens, messages:[{role:'user',content}]};
+      if(isDirect){
+        headers['x-api-key'] = ANT_KEY;
+        headers['anthropic-version'] = '2023-06-01';
+        headers['anthropic-dangerous-direct-browser-access'] = 'true';
+      }
+      const resp = await fetch(url, {method:'POST', headers, body:JSON.stringify(body)});
+      if(!resp.ok){
+        const txt = await resp.text().catch(()=>'');
+        throw new Error('HTTP '+resp.status+': '+txt.slice(0,300));
+      }
+      const data = await resp.json();
+      if(data.error) throw new Error(data.error.message||'API error');
+      const raw = (data.content||[]).map(c=>c.text||'').join('').trim()
+        .replace(/```json/g,'').replace(/```/g,'').trim();
+      return raw;
+    }catch(e){
+      lastErr = e;
+      console.warn('URL failed:', url, e.message);
+      if(url.includes('anthropic.com')) throw e; // no more fallbacks
+    }
   }
-
-  const resp = await fetch(url, {method:'POST', headers, body:JSON.stringify(bodyObj)});
-  if(!resp.ok){
-    const txt = await resp.text().catch(()=>'');
-    throw new Error('HTTP '+resp.status+': '+txt.slice(0,200));
-  }
-  const data = await resp.json();
-  if(data.error) throw new Error(data.error.message||'API error');
-  const raw = (data.content||[]).map(c=>c.text||'').join('').trim()
-    .replace(/```json/g,'').replace(/```/g,'').trim();
-  return raw;
+  throw lastErr;
 }
 
 function hideBanners(pfx){
